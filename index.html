@@ -191,12 +191,17 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     
-    <script>
+<script>
         // Global Data Store
         let airportsData = [];
         let runwaysData = [];
         let frequenciesData = [];
+        let navaidsData = [];
+        let countriesData = [];
+        let regionsData = [];
+        
         let map, currentMarker;
+        let navaidMarkers = [];
 
         // Initialize Application
         document.addEventListener('DOMContentLoaded', () => {
@@ -218,16 +223,25 @@
                 const airportsRes = await fetch('https://davidmegginson.github.io/ourairports-data/airports.csv');
                 const runwaysRes = await fetch('https://davidmegginson.github.io/ourairports-data/runways.csv');
                 const freqRes = await fetch('https://davidmegginson.github.io/ourairports-data/airport-frequencies.csv');
+                const navaidsRes = await fetch('https://davidmegginson.github.io/ourairports-data/navaids.csv');
+                const countriesRes = await fetch('https://davidmegginson.github.io/ourairports-data/countries.csv');
+                const regionsRes = await fetch('https://davidmegginson.github.io/ourairports-data/regions.csv');
 
                 const airportsText = await airportsRes.text();
                 const runwaysText = await runwaysRes.text();
                 const freqText = await freqRes.text();
+                const navaidsText = await navaidsRes.text();
+                const countriesText = await countriesRes.text();
+                const regionsText = await regionsRes.text();
 
                 airportsData = Papa.parse(airportsText, { header: true, skipEmptyLines: true }).data;
                 runwaysData = Papa.parse(runwaysText, { header: true, skipEmptyLines: true }).data;
                 frequenciesData = Papa.parse(freqText, { header: true, skipEmptyLines: true }).data;
+                navaidsData = Papa.parse(navaidsText, { header: true, skipEmptyLines: true }).data;
+                countriesData = Papa.parse(countriesText, { header: true, skipEmptyLines: true }).data;
+                regionsData = Papa.parse(regionsText, { header: true, skipEmptyLines: true }).data;
 
-                console.log('Data successfully loaded from OurAirports archives.');
+                console.log('All datasets successfully loaded, including geodata.');
             } catch (error) {
                 console.error('Error processing CSV datasets:', error);
             }
@@ -306,30 +320,83 @@
                 .bindPopup(`<b>${airport.name}</b><br>${airport.ident}`)
                 .openPopup();
                 
-            map.setView([lat, lon], 13);
+            map.setView([lat, lon], 12); 
+
+            // Clear old navaid markers
+            navaidMarkers.forEach(m => map.removeLayer(m));
+            navaidMarkers = [];
 
             // Filter Relational Objects
             const runways = runwaysData.filter(r => r.airport_ident === airport.ident);
             const frequencies = frequenciesData.filter(f => f.airport_ident === airport.ident);
+            const navaids = navaidsData.filter(n => n.associated_airport === airport.ident);
+
+            // Cross-Reference Country and Region Names
+            const countryObj = countriesData.find(c => c.code === airport.iso_country);
+            const countryName = countryObj ? countryObj.name : airport.iso_country;
+
+            const regionObj = regionsData.find(r => r.code === airport.iso_region);
+            const regionName = regionObj ? regionObj.name : airport.iso_region;
+
+            // Format extra data
+            const scheduledService = airport.scheduled_service === 'yes' ? 'Yes' : 'No';
+            const websiteLink = airport.home_link ? `<a href="${airport.home_link}" target="_blank" style="color: var(--accent); text-decoration: none;">Visit Site</a>` : '—';
+            const magVar = airport.mag_var ? airport.mag_var + '°' : '—';
+
+            // Generate External Resource Links
+            const skyvectorUrl = `https://skyvector.com/airport/${airport.ident}`;
+            const flightawareUrl = `https://flightaware.com/resources/airport/${airport.ident}`;
+            const fr24Url = airport.iata_code ? `https://www.flightradar24.com/data/airports/${airport.iata_code.toLowerCase()}` : null;
 
             // Prep Dashboard UI Panel
             const panel = document.getElementById('details-panel');
             panel.innerHTML = `
                 <h2 style="font-size: 22px; margin-bottom: 4px;">${airport.name}</h2>
                 <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 20px;">
-                    ${airport.municipality ? airport.municipality + ', ' : ''}${airport.iso_country}
+                    ${airport.municipality ? airport.municipality + ', ' : ''}${regionName}, ${countryName}
                 </p>
 
                 <div class="section-title">General Information</div>
                 <div class="info-grid">
                     <div class="info-card"><label>ICAO / Ident</label><p>${airport.ident || '—'}</p></div>
                     <div class="info-card"><label>IATA</label><p>${airport.iata_code || '—'}</p></div>
+                    <div class="info-card"><label>GPS Code</label><p>${airport.gps_code || '—'}</p></div>
+                    <div class="info-card"><label>Local Code</label><p>${airport.local_code || '—'}</p></div>
                     <div class="info-card"><label>Elevation</label><p>${airport.elevation_ft ? airport.elevation_ft + ' ft' : '—'}</p></div>
+                    <div class="info-card"><label>Mag Variation</label><p>${magVar}</p></div>
                     <div class="info-card"><label>Type</label><p>${formatType(airport.type)}</p></div>
+                    <div class="info-card"><label>Scheduled Service</label><p>${scheduledService}</p></div>
+                </div>
+                
+                <div style="margin-bottom: 16px;">
+                    <div class="info-card" style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-size: 14px; font-weight: 600;">Official Website</span>
+                        <span>${websiteLink}</span>
+                    </div>
+                </div>
+
+                <div class="section-title">Charts & Operational Deep Dive</div>
+                <div class="data-list-card" style="display: flex; flex-direction: column; gap: 8px;">
+                    <a href="${skyvectorUrl}" target="_blank" style="display: block; color: var(--accent); text-decoration: none; font-size: 14px; font-weight: 600;">
+                        ➔ View VFR/IFR Aeronautical Charts & Approaches (SkyVector)
+                    </a>
+                    <a href="${flightawareUrl}" target="_blank" style="display: block; color: var(--accent); text-decoration: none; font-size: 14px; font-weight: 600;">
+                        ➔ View Airport Diagrams & IFR Procedure Charts (FlightAware)
+                    </a>
+                    ${fr24Url ? `
+                    <a href="${fr24Url}" target="_blank" style="display: block; color: var(--accent); text-decoration: none; font-size: 14px; font-weight: 600;">
+                        ➔ View Live Terminals, Passenger/Cargo Traffic & Routes (FlightRadar24)
+                    </a>` : `
+                    <p style="font-size: 12px; color: var(--text-muted); margin: 0;">
+                        <em>FlightRadar24 data unavailable (Missing IATA Code)</em>
+                    </p>`}
                 </div>
 
                 <div class="section-title">Runways (${runways.length})</div>
                 <div id="runway-list"></div>
+
+                <div class="section-title">Navigational Aids (${navaids.length})</div>
+                <div id="navaid-list"></div>
 
                 <div class="section-title">Communication Frequencies (${frequencies.length})</div>
                 <div id="freq-list"></div>
@@ -345,15 +412,49 @@
                 const card = document.createElement('div');
                 card.className = 'data-list-card';
                 card.innerHTML = `
-                    <div style="display:flex; justify-content:space-between; font-weight:600; font-size:14px; margin-bottom:4px;">
+                    <div style="display:flex; justify-content:space-between; font-weight:600; font-size:14px; margin-bottom:6px;">
                         <span>Designation: ${r.le_ident || '—'} / ${r.he_ident || '—'}</span>
                         <span style="color: var(--accent);">${r.length_ft || '—'} x ${r.width_ft || '—'} ft</span>
                     </div>
-                    <div style="font-size:12px; color: var(--text-muted);">
-                        Surface: ${r.surface || 'Unknown'} | Lighted: ${r.lighted === '1' ? 'Yes' : 'No'}
+                    <div style="font-size:12px; color: var(--text-muted); margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border);">
+                        Surface: ${r.surface || 'Unknown'} | Lighted: ${r.lighted === '1' ? 'Yes' : 'No'} | Closed: ${r.closed === '1' ? 'Yes' : 'No'}
                     </div>
                 `;
                 runwayList.appendChild(card);
+            });
+
+            // Render Navaids
+            const navaidList = document.getElementById('navaid-list');
+            if (navaids.length === 0) navaidList.innerHTML = '<p style="font-size:14px; color:var(--text-muted)">No associated navaids found.</p>';
+            
+            navaids.forEach(n => {
+                const card = document.createElement('div');
+                card.className = 'data-list-card';
+                card.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; font-weight:600; font-size:14px; margin-bottom:4px;">
+                        <span>${n.ident} - ${n.name}</span>
+                        <span style="color: #ea580c;">${n.type.toUpperCase()}</span>
+                    </div>
+                    <div style="font-size:12px; color: var(--text-muted);">
+                        Frequency: ${n.frequency_khz ? (n.frequency_khz / 1000).toFixed(3) + ' MHz' : '—'} | Usage: ${n.usageType || 'Unknown'}
+                    </div>
+                `;
+                navaidList.appendChild(card);
+
+                if (n.latitude_deg && n.longitude_deg) {
+                    const nLat = parseFloat(n.latitude_deg);
+                    const nLon = parseFloat(n.longitude_deg);
+                    
+                    const marker = L.circleMarker([nLat, nLon], {
+                        color: '#9333ea',
+                        radius: 6,
+                        fillOpacity: 0.7,
+                        weight: 2
+                    }).bindPopup(`<b>${n.ident} (${n.type.toUpperCase()})</b><br>${n.name}`);
+                    
+                    marker.addTo(map);
+                    navaidMarkers.push(marker);
+                }
             });
 
             // Render Frequencies
@@ -371,7 +472,7 @@
                 freqList.appendChild(card);
             });
 
-            // Trigger Async Wikipedia Fetching using Wikipedia REST Endpoint
+            // Trigger Async Wikipedia Fetching
             const wikiSearchTitle = airport.wikipedia_link ? decodeURIComponent(airport.wikipedia_link.split('/wiki/')[1]) : `${airport.name}`;
             const wikiExtract = await fetchWikipediaSummary(wikiSearchTitle);
             document.getElementById('wiki-box').innerText = wikiExtract;
@@ -381,32 +482,6 @@
             if (!type) return '—';
             return type.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
         }
-       async function loadCsvData() {
-        try {
-            // Using relative paths pointing to your local /data folder
-            const airportsRes = await fetch('./data/airports.csv');
-            const runwaysRes = await fetch('./data/runways.csv');
-            const freqRes = await fetch('./data/airport-frequencies.csv');
-            const countriesRes = await fetch('./data/countries.csv');
-            const regionsRes = await fetch('./data/regions.csv');
-
-            const airportsText = await airportsRes.text();
-            const runwaysText = await runwaysRes.text();
-            const freqText = await freqRes.text();
-            const countriesText = await countriesRes.text();
-            const regionsText = await regionsRes.text();
-
-            airportsData = Papa.parse(airportsText, { header: true, skipEmptyLines: true }).data;
-            runwaysData = Papa.parse(runwaysText, { header: true, skipEmptyLines: true }).data;
-            frequenciesData = Papa.parse(freqText, { header: true, skipEmptyLines: true }).data;
-            countriesData = Papa.parse(countriesText, { header: true, skipEmptyLines: true }).data;
-            regionsData = Papa.parse(regionsText, { header: true, skipEmptyLines: true }).data;
-
-            console.log('All local CSV datasets successfully loaded!');
-        } catch (error) {
-            console.error('Error processing local CSV datasets:', error);
-        }
-    }
     </script>
 </body>
 </html>
