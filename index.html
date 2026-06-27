@@ -191,11 +191,13 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     
-    <script>
+ <script>
         // Global Data Store
         let airportsData = [];
         let runwaysData = [];
         let frequenciesData = [];
+        let countriesData = [];
+        let regionsData = [];
         let map, currentMarker;
 
         // Initialize Application
@@ -212,24 +214,30 @@
             }).addTo(map);
         }
 
-        // Load and Parse CSV Data
+        // Load and Parse Local CSV Data
         async function loadCsvData() {
             try {
-                const airportsRes = await fetch('https://davidmegginson.github.io/ourairports-data/airports.csv');
-                const runwaysRes = await fetch('https://davidmegginson.github.io/ourairports-data/runways.csv');
-                const freqRes = await fetch('https://davidmegginson.github.io/ourairports-data/airport-frequencies.csv');
+                const airportsRes = await fetch('./data/airports.csv');
+                const runwaysRes = await fetch('./data/runways.csv');
+                const freqRes = await fetch('./data/airport-frequencies.csv');
+                const countriesRes = await fetch('./data/countries.csv');
+                const regionsRes = await fetch('./data/regions.csv');
 
                 const airportsText = await airportsRes.text();
                 const runwaysText = await runwaysRes.text();
                 const freqText = await freqRes.text();
+                const countriesText = await countriesRes.text();
+                const regionsText = await regionsRes.text();
 
                 airportsData = Papa.parse(airportsText, { header: true, skipEmptyLines: true }).data;
                 runwaysData = Papa.parse(runwaysText, { header: true, skipEmptyLines: true }).data;
                 frequenciesData = Papa.parse(freqText, { header: true, skipEmptyLines: true }).data;
+                countriesData = Papa.parse(countriesText, { header: true, skipEmptyLines: true }).data;
+                regionsData = Papa.parse(regionsText, { header: true, skipEmptyLines: true }).data;
 
-                console.log('Data successfully loaded from OurAirports archives.');
+                console.log('All local CSV datasets successfully loaded!');
             } catch (error) {
-                console.error('Error processing CSV datasets:', error);
+                console.error('Error processing local CSV datasets:', error);
             }
         }
 
@@ -312,12 +320,25 @@
             const runways = runwaysData.filter(r => r.airport_ident === airport.ident);
             const frequencies = frequenciesData.filter(f => f.airport_ident === airport.ident);
 
+            // Lookup full country and region names (fallback to codes if not found)
+            const countryName = countriesData.find(c => c.code === airport.iso_country)?.name || airport.iso_country;
+            const regionName = regionsData.find(r => r.code === airport.iso_region)?.name || airport.iso_region;
+
+            // Build clickable links
+            const wikiLinkHtml = airport.wikipedia_link 
+                ? `<a href="${airport.wikipedia_link}" target="_blank" style="color: var(--accent); text-decoration: none; font-weight: 600; font-size: 13px; display: inline-block; margin-top: 12px;">Read full article on Wikipedia ↗</a>` 
+                : '';
+                
+            const homeLinkHtml = airport.home_link 
+                ? `<a href="${airport.home_link}" target="_blank" style="color: var(--accent); text-decoration: none; font-weight: 600; font-size: 13px; display: inline-block; margin-top: 8px; margin-bottom: 16px;">Official Airport Website ↗</a>` 
+                : '';
+
             // Prep Dashboard UI Panel
             const panel = document.getElementById('details-panel');
             panel.innerHTML = `
                 <h2 style="font-size: 22px; margin-bottom: 4px;">${airport.name}</h2>
                 <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 20px;">
-                    ${airport.municipality ? airport.municipality + ', ' : ''}${airport.iso_country}
+                    ${airport.municipality ? airport.municipality + ', ' : ''}${regionName}, ${countryName}
                 </p>
 
                 <div class="section-title">General Information</div>
@@ -326,7 +347,12 @@
                     <div class="info-card"><label>IATA</label><p>${airport.iata_code || '—'}</p></div>
                     <div class="info-card"><label>Elevation</label><p>${airport.elevation_ft ? airport.elevation_ft + ' ft' : '—'}</p></div>
                     <div class="info-card"><label>Type</label><p>${formatType(airport.type)}</p></div>
+                    <div class="info-card"><label>GPS Code</label><p>${airport.gps_code || '—'}</p></div>
+                    <div class="info-card"><label>Local Code</label><p>${airport.local_code || '—'}</p></div>
+                    <div class="info-card"><label>Commercial Flights</label><p>${airport.scheduled_service === 'yes' ? 'Yes' : 'No'}</p></div>
+                    <div class="info-card"><label>Coordinates</label><p>${parseFloat(airport.latitude_deg).toFixed(4)}, ${parseFloat(airport.longitude_deg).toFixed(4)}</p></div>
                 </div>
+                ${homeLinkHtml}
 
                 <div class="section-title">Runways (${runways.length})</div>
                 <div id="runway-list"></div>
@@ -335,22 +361,32 @@
                 <div id="freq-list"></div>
 
                 <div class="section-title">Wikipedia Insights</div>
-                <div id="wiki-box" class="wiki-text"><span class="loader"></span> Loading dynamic overview...</div>
+                <div class="data-list-card" style="padding-bottom: 16px;">
+                    <div id="wiki-box" class="wiki-text"><span class="loader"></span> Loading dynamic overview...</div>
+                    ${wikiLinkHtml}
+                </div>
             `;
 
             // Render Runways
             const runwayList = document.getElementById('runway-list');
             if (runways.length === 0) runwayList.innerHTML = '<p style="font-size:14px; color:var(--text-muted)">No runway entries cataloged.</p>';
             runways.forEach(r => {
+                const isClosed = r.closed === '1';
+                const closedTag = isClosed ? `<span style="color: #ef4444; font-size: 11px; border: 1px solid #ef4444; padding: 2px 4px; border-radius: 4px; margin-left: 8px;">CLOSED</span>` : '';
+                
                 const card = document.createElement('div');
                 card.className = 'data-list-card';
                 card.innerHTML = `
-                    <div style="display:flex; justify-content:space-between; font-weight:600; font-size:14px; margin-bottom:4px;">
-                        <span>Designation: ${r.le_ident || '—'} / ${r.he_ident || '—'}</span>
+                    <div style="display:flex; justify-content:space-between; font-weight:600; font-size:14px; margin-bottom:6px;">
+                        <span>${r.le_ident || '—'} / ${r.he_ident || '—'} ${closedTag}</span>
                         <span style="color: var(--accent);">${r.length_ft || '—'} x ${r.width_ft || '—'} ft</span>
                     </div>
-                    <div style="font-size:12px; color: var(--text-muted);">
-                        Surface: ${r.surface || 'Unknown'} | Lighted: ${r.lighted === '1' ? 'Yes' : 'No'}
+                    <div style="font-size:13px; color: #475569; margin-bottom:6px;">
+                        <strong>Surface:</strong> ${r.surface || 'Unknown'} | <strong>Lighted:</strong> ${r.lighted === '1' ? 'Yes' : 'No'}
+                    </div>
+                    <div style="font-size:12px; color: var(--text-muted); display: flex; justify-content: space-between;">
+                        <span><strong>LE Heading:</strong> ${r.le_heading_degT ? r.le_heading_degT + '°T' : '—'}</span>
+                        <span><strong>HE Heading:</strong> ${r.he_heading_degT ? r.he_heading_degT + '°T' : '—'}</span>
                     </div>
                 `;
                 runwayList.appendChild(card);
@@ -363,7 +399,7 @@
                 const card = document.createElement('div');
                 card.className = 'data-list-card';
                 card.innerHTML = `
-                    <div style="display:flex; justify-content:space-between; font-weight:600; font-size:14px; margin-bottom:4px;">
+                    <div style="display:flex; justify-content:space-between; font-weight:600; font-size:14px;">
                         <span>${f.type || 'COM'} (${f.description || 'Frequency'})</span>
                         <span style="color: #059669;">${f.frequency_mhz || '—'} MHz</span>
                     </div>
@@ -371,7 +407,7 @@
                 freqList.appendChild(card);
             });
 
-            // Trigger Async Wikipedia Fetching using Wikipedia REST Endpoint
+            // Trigger Async Wikipedia Fetching
             const wikiSearchTitle = airport.wikipedia_link ? decodeURIComponent(airport.wikipedia_link.split('/wiki/')[1]) : `${airport.name}`;
             const wikiExtract = await fetchWikipediaSummary(wikiSearchTitle);
             document.getElementById('wiki-box').innerText = wikiExtract;
@@ -381,36 +417,6 @@
             if (!type) return '—';
             return type.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
         }
-       // Make sure to add global variables for the new data at the top of your script:
-    // let countriesData = [];
-    // let regionsData = [];
-
-    async function loadCsvData() {
-        try {
-            // Using relative paths pointing to your local /data folder
-            const airportsRes = await fetch('./data/airports.csv');
-            const runwaysRes = await fetch('./data/runways.csv');
-            const freqRes = await fetch('./data/airport-frequencies.csv');
-            const countriesRes = await fetch('./data/countries.csv');
-            const regionsRes = await fetch('./data/regions.csv');
-
-            const airportsText = await airportsRes.text();
-            const runwaysText = await runwaysRes.text();
-            const freqText = await freqRes.text();
-            const countriesText = await countriesRes.text();
-            const regionsText = await regionsRes.text();
-
-            airportsData = Papa.parse(airportsText, { header: true, skipEmptyLines: true }).data;
-            runwaysData = Papa.parse(runwaysText, { header: true, skipEmptyLines: true }).data;
-            frequenciesData = Papa.parse(freqText, { header: true, skipEmptyLines: true }).data;
-            countriesData = Papa.parse(countriesText, { header: true, skipEmptyLines: true }).data;
-            regionsData = Papa.parse(regionsText, { header: true, skipEmptyLines: true }).data;
-
-            console.log('All local CSV datasets successfully loaded!');
-        } catch (error) {
-            console.error('Error processing local CSV datasets:', error);
-        }
-    }
     </script>
 </body>
 </html>
