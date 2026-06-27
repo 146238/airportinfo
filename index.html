@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Global Airport Dashboard</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --bg-primary: #f8fafc;
+            --bg-sidebar: #ffffff;
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --accent: #2563eb;
+            --border: #e2e8f0;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', sans-serif;
+        }
+
+        body {
+            display: flex;
+            height: 100vh;
+            background-color: var(--bg-primary);
+            color: var(--text-main);
+            overflow: hidden;
+        }
+
+        /* Sidebar Styling */
+        #sidebar {
+            width: 420px;
+            background: var(--bg-sidebar);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            z-index: 10;
+            box-shadow: 2px 0 8px rgba(0,0,0,0.05);
+        }
+
+        .search-container {
+            padding: 20px;
+            border-bottom: 1px solid var(--border);
+            background: #fff;
+        }
+
+        .search-wrapper {
+            position: relative;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input[type="text"]:focus {
+            border-color: var(--accent);
+        }
+
+        .results-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: #fff;
+            border: 1px solid var(--border);
+            border-top: none;
+            border-radius: 0 0 8px 8px;
+            max-height: 250px;
+            overflow-y: auto;
+            z-index: 100;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+            display: none;
+        }
+
+        .result-item {
+            padding: 10px 16px;
+            cursor: pointer;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .result-item:hover {
+            background-color: #f1f5f9;
+        }
+
+        /* Details Panel */
+        .details-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .section-title {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin: 20px 0 10px 0;
+            font-weight: 700;
+        }
+
+        /* Map Canvas */
+        #map {
+            flex: 1;
+            height: 100%;
+        }
+
+        /* Data Grid Components */
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .info-card {
+            background: #fff;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+
+        .info-card label {
+            display: block;
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+
+        .info-card p {
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        /* List Cards (Runways & Frequencies) */
+        .data-list-card {
+            background: #fff;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 8px;
+        }
+
+        .wiki-text {
+            font-size: 14px;
+            line-height: 1.5;
+            color: #334155;
+        }
+        
+        .loader {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(0,0,0,.1);
+            border-radius: 50%;
+            border-top-color: var(--accent);
+            animation: spin 1s ease-in-out infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <div class="search-container">
+            <h2 style="margin-bottom: 12px; font-size: 18px;">Airport Explorer</h2>
+            <div class="search-wrapper">
+                <input type="text" id="airport-search" placeholder="Search by ICAO, IATA, or Name..." autocomplete="off">
+                <div id="search-results" class="results-dropdown"></div>
+            </div>
+        </div>
+        
+        <div class="details-container" id="details-panel">
+            <p style="color: var(--text-muted); text-align: center; margin-top: 40px;">Search for an airport to display its operational configuration data.</p>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    
+    <script>
+        // Global Data Store
+        let airportsData = [];
+        let runwaysData = [];
+        let frequenciesData = [];
+        let map, currentMarker;
+
+        // Initialize Application
+        document.addEventListener('DOMContentLoaded', () => {
+            initMap();
+            loadCsvData();
+            setupSearchEvents();
+        });
+
+        function initMap() {
+            map = L.map('map').setView([20, 0], 2);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(map);
+        }
+
+        // Load and Parse CSV Data
+        async function loadCsvData() {
+            try {
+                const airportsRes = await fetch('https://davidmegginson.github.io/ourairports-data/airports.csv');
+                const runwaysRes = await fetch('https://davidmegginson.github.io/ourairports-data/runways.csv');
+                const freqRes = await fetch('https://davidmegginson.github.io/ourairports-data/airport-frequencies.csv');
+
+                const airportsText = await airportsRes.text();
+                const runwaysText = await runwaysRes.text();
+                const freqText = await freqRes.text();
+
+                airportsData = Papa.parse(airportsText, { header: true, skipEmptyLines: true }).data;
+                runwaysData = Papa.parse(runwaysText, { header: true, skipEmptyLines: true }).data;
+                frequenciesData = Papa.parse(freqText, { header: true, skipEmptyLines: true }).data;
+
+                console.log('Data successfully loaded from OurAirports archives.');
+            } catch (error) {
+                console.error('Error processing CSV datasets:', error);
+            }
+        }
+
+        function setupSearchEvents() {
+            const searchInput = document.getElementById('airport-search');
+            const resultsDropdown = document.getElementById('search-results');
+
+            searchInput.addEventListener('input', (e) => {
+                const val = e.target.value.toLowerCase().trim();
+                if (val.length < 2) {
+                    resultsDropdown.style.display = 'none';
+                    return;
+                }
+
+                const matches = airportsData.filter(a => 
+                    (a.ident && a.ident.toLowerCase().includes(val)) ||
+                    (a.iata_code && a.iata_code.toLowerCase().includes(val)) ||
+                    (a.name && a.name.toLowerCase().includes(val))
+                ).slice(0, 10);
+
+                renderSearchResults(matches);
+            });
+
+            document.addEventListener('click', (e) => {
+                if (!searchInput.contains(e.target) && !resultsDropdown.contains(e.target)) {
+                    resultsDropdown.style.display = 'none';
+                }
+            });
+        }
+
+        function renderSearchResults(matches) {
+            const dropdown = document.getElementById('search-results');
+            dropdown.innerHTML = '';
+            
+            if (matches.length === 0) {
+                dropdown.style.display = 'none';
+                return;
+            }
+
+            matches.forEach(airport => {
+                const item = document.createElement('div');
+                item.className = 'result-item';
+                item.innerHTML = `<strong>${airport.ident}</strong> - ${airport.name} (${airport.municipality || 'N/A'})`;
+                item.addEventListener('click', () => {
+                    selectAirport(airport);
+                    dropdown.style.display = 'none';
+                    document.getElementById('airport-search').value = '';
+                });
+                dropdown.appendChild(item);
+            });
+            dropdown.style.display = 'block';
+        }
+
+        async function fetchWikipediaSummary(title) {
+            if (!title) return "No Wikipedia information available.";
+            try {
+                const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`;
+                const res = await fetch(url);
+                if (!res.ok) throw new Error();
+                const data = await res.json();
+                return data.extract;
+            } catch {
+                return "Could not retrieve Wikipedia summary for this location.";
+            }
+        }
+
+        async function selectAirport(airport) {
+            // Focus Map
+            const lat = parseFloat(airport.latitude_deg);
+            const lon = parseFloat(airport.longitude_deg);
+            
+            if (currentMarker) map.removeLayer(currentMarker);
+            currentMarker = L.marker([lat, lon]).addTo(map)
+                .bindPopup(`<b>${airport.name}</b><br>${airport.ident}`)
+                .openPopup();
+                
+            map.setView([lat, lon], 13);
+
+            // Filter Relational Objects
+            const runways = runwaysData.filter(r => r.airport_ident === airport.ident);
+            const frequencies = frequenciesData.filter(f => f.airport_ident === airport.ident);
+
+            // Prep Dashboard UI Panel
+            const panel = document.getElementById('details-panel');
+            panel.innerHTML = `
+                <h2 style="font-size: 22px; margin-bottom: 4px;">${airport.name}</h2>
+                <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 20px;">
+                    ${airport.municipality ? airport.municipality + ', ' : ''}${airport.iso_country}
+                </p>
+
+                <div class="section-title">General Information</div>
+                <div class="info-grid">
+                    <div class="info-card"><label>ICAO / Ident</label><p>${airport.ident || '—'}</p></div>
+                    <div class="info-card"><label>IATA</label><p>${airport.iata_code || '—'}</p></div>
+                    <div class="info-card"><label>Elevation</label><p>${airport.elevation_ft ? airport.elevation_ft + ' ft' : '—'}</p></div>
+                    <div class="info-card"><label>Type</label><p>${formatType(airport.type)}</p></div>
+                </div>
+
+                <div class="section-title">Runways (${runways.length})</div>
+                <div id="runway-list"></div>
+
+                <div class="section-title">Communication Frequencies (${frequencies.length})</div>
+                <div id="freq-list"></div>
+
+                <div class="section-title">Wikipedia Insights</div>
+                <div id="wiki-box" class="wiki-text"><span class="loader"></span> Loading dynamic overview...</div>
+            `;
+
+            // Render Runways
+            const runwayList = document.getElementById('runway-list');
+            if (runways.length === 0) runwayList.innerHTML = '<p style="font-size:14px; color:var(--text-muted)">No runway entries cataloged.</p>';
+            runways.forEach(r => {
+                const card = document.createElement('div');
+                card.className = 'data-list-card';
+                card.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; font-weight:600; font-size:14px; margin-bottom:4px;">
+                        <span>Designation: ${r.le_ident || '—'} / ${r.he_ident || '—'}</span>
+                        <span style="color: var(--accent);">${r.length_ft || '—'} x ${r.width_ft || '—'} ft</span>
+                    </div>
+                    <div style="font-size:12px; color: var(--text-muted);">
+                        Surface: ${r.surface || 'Unknown'} | Lighted: ${r.lighted === '1' ? 'Yes' : 'No'}
+                    </div>
+                `;
+                runwayList.appendChild(card);
+            });
+
+            // Render Frequencies
+            const freqList = document.getElementById('freq-list');
+            if (frequencies.length === 0) freqList.innerHTML = '<p style="font-size:14px; color:var(--text-muted)">No communication bands found.</p>';
+            frequencies.forEach(f => {
+                const card = document.createElement('div');
+                card.className = 'data-list-card';
+                card.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; font-weight:600; font-size:14px; margin-bottom:4px;">
+                        <span>${f.type || 'COM'} (${f.description || 'Frequency'})</span>
+                        <span style="color: #059669;">${f.frequency_mhz || '—'} MHz</span>
+                    </div>
+                `;
+                freqList.appendChild(card);
+            });
+
+            // Trigger Async Wikipedia Fetching using Wikipedia REST Endpoint
+            const wikiSearchTitle = airport.wikipedia_link ? decodeURIComponent(airport.wikipedia_link.split('/wiki/')[1]) : `${airport.name}`;
+            const wikiExtract = await fetchWikipediaSummary(wikiSearchTitle);
+            document.getElementById('wiki-box').innerText = wikiExtract;
+        }
+
+        function formatType(type) {
+            if (!type) return '—';
+            return type.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+        }
+    </script>
+</body>
+</html>
