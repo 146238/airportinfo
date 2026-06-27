@@ -381,11 +381,7 @@
             if (!type) return '—';
             return type.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
         }
-       // Make sure to add global variables for the new data at the top of your script:
-    // let countriesData = [];
-    // let regionsData = [];
-
-    async function loadCsvData() {
+       async function loadCsvData() {
         try {
             // Using relative paths pointing to your local /data folder
             const airportsRes = await fetch('./data/airports.csv');
